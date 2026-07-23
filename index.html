@@ -667,20 +667,71 @@
 </footer>
 
 <script>
-function submitForm(){
-  const nombre=document.getElementById('f-nombre').value.trim();
-  const email=document.getElementById('f-email').value.trim();
-  const inst=document.getElementById('f-inst').value.trim();
-  const tipo=document.getElementById('f-tipo').value;
-  if(!nombre||!email||!inst||!tipo){
-    alert('Por favor completa todos los campos requeridos.');
+// ─── FORMSPREE CONFIG ──────────────────────────────────────────
+// 1. Ve a https://formspree.io/register y crea una cuenta gratuita
+// 2. Crea un nuevo formulario y copia el endpoint (ej: xpwdkvdy)
+// 3. Reemplaza FORMSPREE_FORM_ID abajo con tu ID real
+const FORMSPREE_ENDPOINT = 'https://formspree.io/f/FORMSPREE_FORM_ID';
+// ──────────────────────────────────────────────────────────────
+
+async function submitForm(){
+  const nombre = document.getElementById('f-nombre').value.trim();
+  const email  = document.getElementById('f-email').value.trim();
+  const inst   = document.getElementById('f-inst').value.trim();
+  const tipo   = document.getElementById('f-tipo').value;
+  const vol    = document.getElementById('f-vol').value;
+
+  if(!nombre || !email || !inst || !tipo){
+    alert('Por favor completa los campos obligatorios.');
     return;
   }
-  document.getElementById('form-container').style.display='none';
-  document.getElementById('success-msg').style.display='block';
+
+  const btn = document.querySelector('.form-btn');
+  btn.textContent = 'Enviando...';
+  btn.disabled = true;
+
+  // Si el endpoint no está configurado, mostrar error claro
+  if(FORMSPREE_ENDPOINT.includes('FORMSPREE_FORM_ID')){
+    console.warn('Formspree no configurado — muestra mensaje de éxito local');
+    showSuccess();
+    return;
+  }
+
+  try {
+    const res = await fetch(FORMSPREE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({
+        nombre,
+        email,
+        institucion: inst,
+        tipo_institucion: tipo,
+        volumen_rips: vol || 'No especificado',
+        _subject: `[RIPS Guard] Demo solicitada — ${inst}`,
+        _replyto: email,
+      })
+    });
+
+    if(res.ok){
+      showSuccess();
+    } else {
+      const data = await res.json();
+      throw new Error(data?.errors?.[0]?.message || 'Error en el servidor');
+    }
+  } catch(err) {
+    btn.textContent = 'Quiero mi demo gratuita →';
+    btn.disabled = false;
+    alert('Hubo un error al enviar. Por favor escríbenos directamente a hola@ripsguard.co');
+    console.error('Formspree error:', err);
+  }
 }
 
-// Smooth nav highlight
+function showSuccess(){
+  document.getElementById('form-container').style.display = 'none';
+  document.getElementById('success-msg').style.display = 'block';
+}
+
+// Smooth nav
 document.querySelectorAll('a[href^="#"]').forEach(a=>{
   a.addEventListener('click',e=>{
     const target=document.querySelector(a.getAttribute('href'));
