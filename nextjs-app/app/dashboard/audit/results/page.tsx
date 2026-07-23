@@ -1,28 +1,58 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-
-interface AuditResult {
-  audit_id: string
-  status: string
-  total_errors: number
-  total_warnings: number
-  errors: Array<{ code: string; message: string; severity: string; path?: string }>
-  summary: string
-}
+import { getAuditById, type AuditResult } from '@/lib/api'
 
 export default function ResultsPage() {
+  const searchParams = useSearchParams()
+  const auditId = searchParams.get('id')
   const [result, setResult] = useState<AuditResult | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const stored = sessionStorage.getItem('auditResult')
-    if (stored) setResult(JSON.parse(stored))
-  }, [])
+    if (!auditId) {
+      setLoading(false)
+      return
+    }
+    getAuditById(auditId)
+      .then(setResult)
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [auditId])
 
-  if (!result) {
+  if (!auditId) {
     return (
       <div className="p-8">
-        <p className="text-gray-500">No hay resultados. <Link href="/dashboard/audit" className="text-blue-600">Nueva auditoría</Link></p>
+        <p className="text-gray-500">
+          No hay resultados.{' '}
+          <Link href="/dashboard/audit" className="text-blue-600 hover:underline">
+            Nueva auditoría
+          </Link>
+        </p>
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="p-8 flex items-center gap-3 text-gray-500">
+        <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
+        Cargando resultados...
+      </div>
+    )
+  }
+
+  if (error || !result) {
+    return (
+      <div className="p-8">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700 text-sm">
+          {error || 'No se encontró la auditoría'}
+        </div>
+        <Link href="/dashboard/audit" className="inline-block mt-4 text-blue-600 hover:underline text-sm">
+          ← Nueva auditoría
+        </Link>
       </div>
     )
   }
@@ -39,7 +69,10 @@ export default function ResultsPage() {
       </div>
 
       {/* Summary card */}
-      <div className={`rounded-xl p-6 mb-6 ${passed ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'}`}>
+      <div className={`rounded-xl p-6 mb-6 ${passed
+        ? 'bg-green-50 border border-green-200'
+        : 'bg-red-50 border border-red-200'}`}
+      >
         <div className="flex items-center gap-3 mb-2">
           <span className="text-3xl">{passed ? '✅' : '❌'}</span>
           <h3 className={`text-xl font-bold ${passed ? 'text-green-800' : 'text-red-800'}`}>
@@ -50,6 +83,7 @@ export default function ResultsPage() {
         <div className="flex gap-6 mt-4 text-sm">
           <span className="text-red-700 font-medium">❌ {result.total_errors} errores</span>
           <span className="text-yellow-700 font-medium">⚠️ {result.total_warnings} advertencias</span>
+          <span className="text-gray-400 font-mono text-xs mt-0.5">ID: {result.audit_id}</span>
         </div>
       </div>
 
@@ -60,9 +94,14 @@ export default function ResultsPage() {
             <div key={i} className="bg-white border border-gray-200 rounded-lg p-4">
               <div className="flex items-start gap-3">
                 <span className="text-lg">{err.severity === 'error' ? '❌' : '⚠️'}</span>
-                <div>
+                <div className="flex-1">
                   <p className="font-medium text-gray-900 text-sm">[{err.code}] {err.message}</p>
-                  {err.path && <p className="text-xs text-gray-400 mt-1">{err.path}</p>}
+                  {err.path && (
+                    <p className="text-xs text-gray-400 mt-1 font-mono">{err.path}</p>
+                  )}
+                  {err.suggestion && (
+                    <p className="text-xs text-blue-600 mt-2">💡 {err.suggestion}</p>
+                  )}
                 </div>
               </div>
             </div>
