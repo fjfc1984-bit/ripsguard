@@ -1,0 +1,23 @@
+# ─────────────────────────────────────────────
+# RIPS Guard — Railway Deploy Config
+# Deploy en 1 click: https://railway.app/new
+# ─────────────────────────────────────────────
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "uvicorn worker:app --host 0.0.0.0 --port $PORT --workers 2"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+# Variables de entorno requeridas en Railway Dashboard:
+# ANTHROPIC_API_KEY     → sk-ant-...
+# STRIPE_SECRET_KEY     → sk_live_...
+# STRIPE_WEBHOOK_SECRET → whsec_...
+# SUPABASE_URL          → https://xxx.supabase.co
+# SUPABASE_SERVICE_KEY  → eyJ...
+# APP_URL               → https://app.ripsguard.co

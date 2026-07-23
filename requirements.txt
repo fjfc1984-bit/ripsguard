@@ -1,0 +1,26 @@
+# RIPS Guard — Backend Dependencies
+# Instalar: pip install -r requirements.txt
+
+# API Framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+gunicorn==22.0.0
+python-multipart==0.0.9
+
+# Validación
+pydantic==2.7.1
+
+# IA (Anthropic Claude)
+anthropic==0.28.0
+
+# Pagos
+stripe==9.9.0
+
+# Base de datos (Supabase)
+supabase==2.4.6
+
+# HTTP client
+httpx==0.27.0
+
+# Utilidades
+python-dotenv==1.0.1
