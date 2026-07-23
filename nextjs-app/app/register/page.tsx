@@ -2,15 +2,14 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
-import { useRouter } from 'next/navigation'
 
 export default function RegisterPage() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [orgName, setOrgName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [step, setStep] = useState<'form' | 'confirm'>('form')
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -21,17 +20,58 @@ export default function RegisterPage() {
     e.preventDefault()
     setLoading(true)
     setError(null)
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { org_name: orgName } },
+      options: {
+        data: { org_name: orgName },
+        emailRedirectTo: `${location.origin}/auth/callback`,
+      },
     })
+    setLoading(false)
     if (error) {
       setError(error.message)
-      setLoading(false)
-    } else {
-      router.push('/dashboard')
+      return
     }
+    // Si la sesión ya existe = email confirmation desactivado en Supabase
+    if (data.session) {
+      window.location.href = '/dashboard'
+    } else {
+      // Email confirmation activado (default) — mostrar pantalla de espera
+      setStep('confirm')
+    }
+  }
+
+  if (step === 'confirm') {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 w-full max-w-md text-center">
+          <div className="text-5xl mb-4">📧</div>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">
+            Revisa tu correo
+          </h2>
+          <p className="text-gray-500 text-sm mb-6">
+            Enviamos un enlace de confirmación a{' '}
+            <span className="font-medium text-gray-700">{email}</span>.
+            Haz clic en el enlace para activar tu cuenta.
+          </p>
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-700 mb-6">
+            💡 Si no lo ves en unos minutos, revisa tu carpeta de spam.
+          </div>
+          <button
+            onClick={() => handleRegister({ preventDefault: () => {} } as React.FormEvent)}
+            className="text-sm text-blue-600 hover:underline"
+          >
+            Reenviar correo de confirmación
+          </button>
+          <div className="mt-4">
+            <Link href="/login" className="text-sm text-gray-400 hover:text-gray-600">
+              Volver al inicio de sesión
+            </Link>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -42,7 +82,9 @@ export default function RegisterPage() {
 
         <form onSubmit={handleRegister} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Nombre de la IPS / Clínica</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Nombre de la IPS / Clínica
+            </label>
             <input
               type="text"
               value={orgName}
@@ -89,7 +131,9 @@ export default function RegisterPage() {
 
         <p className="text-center text-sm text-gray-500 mt-6">
           ¿Ya tienes cuenta?{' '}
-          <Link href="/login" className="text-blue-600 hover:underline">Inicia sesión</Link>
+          <Link href="/login" className="text-blue-600 hover:underline">
+            Inicia sesión
+          </Link>
         </p>
       </div>
     </div>
