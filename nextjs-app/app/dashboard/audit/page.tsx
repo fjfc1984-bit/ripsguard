@@ -6,6 +6,7 @@ import { auditRIPS } from '@/lib/api'
 export default function AuditPage() {
   const router = useRouter()
   const [file, setFile] = useState<File | null>(null)
+  const [dragging, setDragging] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -16,14 +17,20 @@ export default function AuditPage() {
     setError(null)
     try {
       const result = await auditRIPS(file)
-      // Store result and navigate
-      sessionStorage.setItem('auditResult', JSON.stringify(result))
-      router.push('/dashboard/audit/results')
+      // fix: usar audit_id en URL en vez de sessionStorage
+      router.push(`/dashboard/audit/results?id=${result.audit_id}`)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Error al procesar el archivo')
     } finally {
       setLoading(false)
     }
+  }
+
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault()
+    setDragging(false)
+    const dropped = e.dataTransfer.files[0]
+    if (dropped) setFile(dropped)
   }
 
   return (
@@ -35,8 +42,13 @@ export default function AuditPage() {
 
       <form onSubmit={handleSubmit}>
         <div
-          className="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center hover:border-blue-400 transition cursor-pointer"
+          className={`border-2 border-dashed rounded-xl p-12 text-center transition cursor-pointer ${
+            dragging ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-blue-400'
+          }`}
           onClick={() => document.getElementById('fileInput')?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={handleDrop}
         >
           <div className="text-4xl mb-4">📂</div>
           {file ? (
@@ -45,11 +57,18 @@ export default function AuditPage() {
               <p className="text-sm text-gray-500 mt-1">
                 {(file.size / 1024).toFixed(1)} KB
               </p>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setFile(null) }}
+                className="text-xs text-red-500 mt-2 hover:underline"
+              >
+                Cambiar archivo
+              </button>
             </div>
           ) : (
             <div>
-              <p className="text-gray-600">Arrastra tu archivo RIPS aqui</p>
-              <p className="text-sm text-gray-400 mt-1">JSON .rips</p>
+              <p className="text-gray-600">Arrastra o haz clic para seleccionar</p>
+              <p className="text-sm text-gray-400 mt-1">.json / .rips</p>
             </div>
           )}
           <input
