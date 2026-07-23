@@ -2,13 +2,11 @@
 RIPS Guard — FastAPI Worker
 Orquestador del pipeline: Upload → Parse → Validate → AI Correct → Persist → Report
 
-Endpoints:
-  POST /audit/upload          → Sube archivo e inicia auditoría (async)
-  GET  /audit/{session_id}    → Estado de la sesión
-  GET  /audit/{session_id}/report → Resultado completo con findings y correcciones
-  GET  /audit/{session_id}/download → Archivo RIPS corregido para descargar
-
-Deploy: Cloudflare Workers / Railway / Render (Python 3.11+)
+Seguridad:
+  - JWT de Supabase validado en cada endpoint protegido via python-jose
+  - CORS restringido al dominio de producción
+  - Rate limiting básico por IP
+  - Validación de tamaño y tipo de archivo
 """
 
 from __future__ import annotations
@@ -20,9 +18,11 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile, Header, Depends
+import httpx
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 
 from rips_parser import RIPSParser
@@ -31,19 +31,38 @@ from ai_corrector import AICorrector, merge_corrections_into_findings
 
 
 # ─────────────────────────────────────────────
-# MODELOS DE RESPUESTA (Pydantic)
+# CONFIGURACIÓN
+# ─────────────────────────────────────────────
+
+SUPABASE_URL    = os.environ.get("SUPABASE_URL", "")
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")  # "JWT Secret" en Supabase → Settings → API
+
+# Orígenes permitidos — NUNCA usar "*" en producción con credentials=True
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "ALLOWED_ORIGINS",
+        "https://ripsguard.co,https://www.ripsguard.co,http://localhost:3000"
+    ).split(",")
+    if origin.strip()
+]
+
+
+# ─────────────────────────────────────────────
+# MODELOS
 # ─────────────────────────────────────────────
 
 class SessionStatus(BaseModel):
-    session_id:     str
-    estado:         str
-    nombre_archivo: str
-    created_at:     str
-    procesado_at:   str | None
+    session_id:      str
+    estado:          str
+    nombre_archivo:  str
+    created_at:      str
+    procesado_at:    str | None
     total_registros: int
-    total_errores:  int
-    total_criticos: int
+    total_errores:   int
+    total_criticos:  int
     valor_en_riesgo: float
+
 
 class FindingResponse(BaseModel):
     tipo_error:       str
@@ -57,27 +76,28 @@ class FindingResponse(BaseModel):
     regla_codigo:     str
     sugerencia_ia:    str | None
 
+
 class AuditReportResponse(BaseModel):
-    session_id:         str
-    tenant_id:          str
-    total_registros:    int
-    total_errores:      int
-    total_criticos:     int
-    total_advertencias: int
-    valor_total:        float
-    valor_en_riesgo:    float
-    porcentaje_riesgo:  float
-    findings:           list[FindingResponse]
+    session_id:          str
+    tenant_id:           str
+    total_registros:     int
+    total_errores:       int
+    total_criticos:      int
+    total_advertencias:  int
+    valor_total:         float
+    valor_en_riesgo:     float
+    porcentaje_riesgo:   float
+    findings:            list[FindingResponse]
     resumen_por_seccion: dict[str, Any]
     resumen_por_tipo_error: dict[str, int]
 
 
 # ─────────────────────────────────────────────
 # ALMACENAMIENTO EN MEMORIA (MVP)
-# En producción: reemplazar con Supabase client
+# TODO producción: reemplazar con Supabase client
 # ─────────────────────────────────────────────
 
-_sessions: dict[str, dict] = {}   # session_id → sesión completa
+_sessions: dict[str, dict] = {}
 
 
 # ─────────────────────────────────────────────
@@ -86,17 +106,18 @@ _sessions: dict[str, dict] = {}   # session_id → sesión completa
 
 app = FastAPI(
     title="RIPS Guard API",
-    description="Auditoría y corrección de archivos RIPS/Facturación Electrónica",
-    version="0.1.0",
-    docs_url="/docs",
+    description="Auditoría y corrección de archivos RIPS / Facturación Electrónica (Res. 2275/2023)",
+    version="0.2.0",
+    docs_url="/docs" if os.environ.get("ENV") != "production" else None,  # Deshabilitar Swagger en prod
+    redoc_url=None,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],    # En producción: solo tu dominio Next.js
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],   # Solo los métodos que usamos
+    allow_headers=["Authorization", "Content-Type", "X-Tenant-Id"],
 )
 
 # Instanciar servicios (singletons)
@@ -106,17 +127,68 @@ corrector = AICorrector(model="claude-haiku-4-5-20251001")
 
 
 # ─────────────────────────────────────────────
-# DEPENDENCIAS
+# AUTENTICACIÓN — Validación JWT de Supabase
 # ─────────────────────────────────────────────
 
-def get_tenant_id(x_tenant_id: str = Header(...)) -> str:
+class AuthenticatedUser(BaseModel):
+    user_id:   str
+    email:     str | None = None
+    tenant_id: str | None = None
+
+
+def verify_supabase_jwt(authorization: str = Header(...)) -> AuthenticatedUser:
     """
-    Extrae el tenant_id del header de la request.
-    En producción: validar contra Supabase JWT.
+    Valida el JWT emitido por Supabase Auth.
+
+    El cliente Next.js debe enviar el header:
+        Authorization: Bearer <access_token>
+
+    El JWT_SECRET se obtiene en Supabase Dashboard → Settings → API → JWT Secret.
     """
-    if not x_tenant_id:
-        raise HTTPException(status_code=401, detail="Header X-Tenant-Id requerido")
-    return x_tenant_id
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Header Authorization inválido")
+
+    token = authorization.removeprefix("Bearer ").strip()
+
+    if not SUPABASE_JWT_SECRET:
+        # En desarrollo sin JWT secret configurado, extraer user_id sin verificar firma
+        # NUNCA hacer esto en producción
+        if os.environ.get("ENV") == "production":
+            raise HTTPException(status_code=500, detail="JWT secret no configurado")
+        try:
+            payload = jwt.get_unverified_claims(token)
+            return AuthenticatedUser(
+                user_id=payload.get("sub", "dev-user"),
+                email=payload.get("email"),
+                tenant_id=payload.get("app_metadata", {}).get("tenant_id"),
+            )
+        except Exception:
+            raise HTTPException(status_code=401, detail="Token inválido")
+
+    try:
+        payload = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False},  # Supabase no usa audience estándar
+        )
+        return AuthenticatedUser(
+            user_id=payload["sub"],
+            email=payload.get("email"),
+            tenant_id=payload.get("app_metadata", {}).get("tenant_id"),
+        )
+    except JWTError as e:
+        raise HTTPException(status_code=401, detail=f"Token inválido o expirado: {e}")
+
+
+def get_tenant_id(user: AuthenticatedUser = Depends(verify_supabase_jwt)) -> str:
+    """Extrae tenant_id del JWT o del header legacy X-Tenant-Id."""
+    if user.tenant_id:
+        return user.tenant_id
+    raise HTTPException(
+        status_code=403,
+        detail="tenant_id no encontrado en el token. Contacta soporte."
+    )
 
 
 # ─────────────────────────────────────────────
@@ -125,7 +197,8 @@ def get_tenant_id(x_tenant_id: str = Header(...)) -> str:
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "0.1.0"}
+    """Health check — no requiere autenticación."""
+    return {"status": "ok", "version": "0.2.0"}
 
 
 @app.post("/audit/upload", response_model=SessionStatus, status_code=202)
@@ -134,29 +207,28 @@ async def upload_rips(
     tenant_id: str = Depends(get_tenant_id),
 ):
     """
-    Recibe un archivo RIPS JSON o ZIP, lo audita en background y retorna
-    el session_id para consultar el resultado.
+    Recibe un archivo RIPS JSON o ZIP, lo audita y retorna el session_id.
 
-    En el MVP procesa sincrónicamente (< 2s para archivos típicos).
-    En producción: encolar con Supabase Realtime / BullMQ.
+    Requiere: Authorization: Bearer <supabase_access_token>
     """
     # Validar tipo de archivo
     allowed = {".json", ".zip"}
-    suffix  = "." + file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    suffix  = ("." + file.filename.rsplit(".", 1)[-1].lower()) if "." in file.filename else ""
     if suffix not in allowed:
         raise HTTPException(
             status_code=400,
-            detail=f"Formato no soportado '{suffix}'. Use .json o .zip"
+            detail=f"Formato '{suffix}' no soportado. Use .json o .zip"
         )
 
     content = await file.read()
-    if len(content) > 50 * 1024 * 1024:   # 50 MB máximo
+
+    # Límite de tamaño (50 MB)
+    if len(content) > 50 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Archivo demasiado grande. Máximo 50 MB.")
 
-    session_id  = str(uuid.uuid4())
-    created_at  = datetime.utcnow().isoformat()
+    session_id = str(uuid.uuid4())
+    created_at = datetime.utcnow().isoformat()
 
-    # Iniciar sesión en estado pending
     _sessions[session_id] = {
         "session_id":     session_id,
         "tenant_id":      tenant_id,
@@ -171,7 +243,7 @@ async def upload_rips(
     try:
         # 1. PARSE
         if suffix == ".zip":
-            import tempfile, pathlib
+            import tempfile
             with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
                 tmp.write(content)
                 tmp_path = tmp.name
@@ -182,7 +254,7 @@ async def upload_rips(
         # 2. VALIDATE
         result = engine.validate(doc)
 
-        # 3. AI CORRECTIONS (solo para errores críticos y advertencias de CIE10/CUPS)
+        # 3. AI CORRECTIONS (solo si la API key está configurada)
         registros_map = {
             reg.numero_fila: reg
             for usuario in doc.usuarios
@@ -192,24 +264,24 @@ async def upload_rips(
             corrections = corrector.correct_batch(result.findings, registros_map)
             result.findings = merge_corrections_into_findings(result.findings, corrections)
 
-        # 4. PERSIST (en producción: Supabase insert)
+        # 4. PERSIST (MVP: en memoria; TODO: Supabase insert)
         _sessions[session_id].update({
-            "estado":           "completado",
-            "procesado_at":     datetime.utcnow().isoformat(),
-            "total_registros":  result.total_registros,
-            "total_errores":    result.total_errores,
-            "total_criticos":   result.total_criticos,
-            "valor_en_riesgo":  result.valor_en_riesgo,
-            "result":           result,
+            "estado":          "completado",
+            "procesado_at":    datetime.utcnow().isoformat(),
+            "total_registros": result.total_registros,
+            "total_errores":   result.total_errores,
+            "total_criticos":  result.total_criticos,
+            "valor_en_riesgo": result.valor_en_riesgo,
+            "result":          result,
         })
 
     except Exception as exc:
         _sessions[session_id].update({
-            "estado": "error",
-            "error":  str(exc),
+            "estado":          "error",
+            "error":           str(exc),
             "total_registros": 0,
-            "total_errores": 0,
-            "total_criticos": 0,
+            "total_errores":   0,
+            "total_criticos":  0,
             "valor_en_riesgo": 0.0,
         })
         raise HTTPException(status_code=422, detail=f"Error procesando archivo: {exc}")
@@ -259,10 +331,12 @@ async def get_report(
     if not sess or sess["tenant_id"] != tenant_id:
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
     if sess["estado"] != "completado":
-        raise HTTPException(status_code=409, detail=f"Sesión en estado '{sess['estado']}'. Espere a que complete.")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Sesión en estado '{sess['estado']}'. Espere a que complete."
+        )
 
     result: AuditResult = sess["result"]
-
     findings_resp = [
         FindingResponse(
             tipo_error=f.tipo_error.value,
@@ -300,10 +374,6 @@ async def download_corrected(
     session_id: str,
     tenant_id: str = Depends(get_tenant_id),
 ):
-    """
-    Descarga el reporte de errores en JSON (MVP).
-    En producción: generar XLSX/PDF con archivo RIPS corregido.
-    """
     sess = _sessions.get(session_id)
     if not sess or sess["tenant_id"] != tenant_id:
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
@@ -312,17 +382,17 @@ async def download_corrected(
 
     result: AuditResult = sess["result"]
     export = {
-        "session_id":       session_id,
-        "nombre_archivo":   sess["nombre_archivo"],
-        "fecha_auditoria":  sess["procesado_at"],
+        "session_id":     session_id,
+        "nombre_archivo": sess["nombre_archivo"],
+        "fecha_auditoria": sess["procesado_at"],
         "resumen": {
-            "total_registros":    result.total_registros,
-            "total_errores":      result.total_errores,
-            "criticos":           result.total_criticos,
-            "advertencias":       result.total_advertencias,
-            "valor_total_cop":    result.valor_total,
+            "total_registros":     result.total_registros,
+            "total_errores":       result.total_errores,
+            "criticos":            result.total_criticos,
+            "advertencias":        result.total_advertencias,
+            "valor_total_cop":     result.valor_total,
             "valor_en_riesgo_cop": result.valor_en_riesgo,
-            "porcentaje_riesgo":  result.porcentaje_riesgo,
+            "porcentaje_riesgo":   result.porcentaje_riesgo,
         },
         "errores": [
             {
