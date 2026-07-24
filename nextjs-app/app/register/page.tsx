@@ -3,6 +3,7 @@ import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
+import { CheckIcon, LockIcon, AlertCircleIcon, MailIcon } from '@/components/ui/icons'
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -55,8 +56,8 @@ export default function RegisterPage() {
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center px-4">
         <div className="w-full max-w-md">
           <div className="bg-white rounded-2xl shadow-lg shadow-slate-200/50 border border-slate-100 p-8 text-center">
-            <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4">
-              📧
+            <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <MailIcon size={28} className="text-blue-600" strokeWidth={1.75} />
             </div>
             <h2 className="text-xl font-bold text-slate-900 mb-2">Revisa tu correo</h2>
             <p className="text-slate-500 text-sm mb-2">
@@ -66,7 +67,7 @@ export default function RegisterPage() {
               {email}
             </p>
             <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-700 mb-6 text-left">
-              💡 Haz clic en el enlace del correo para activar tu cuenta. Si no aparece en unos minutos, revisa <strong>spam</strong>.
+              Haz clic en el enlace del correo para activar tu cuenta. Si no aparece en unos minutos, revisa <strong>spam</strong>.
             </div>
             <button
               onClick={handleResend}
@@ -100,8 +101,14 @@ export default function RegisterPage() {
 
         {/* Trust badges */}
         <div className="flex items-center justify-center gap-4 mb-6">
-          {['✅ Res. 2275/2023', '🔒 Datos seguros', '🇨🇴 Hecho en Colombia'].map(b => (
-            <span key={b} className="text-xs text-slate-500 font-medium">{b}</span>
+          {[
+            { icon: <CheckIcon size={11} strokeWidth={2.5} className="text-green-500" />, text: 'Res. 2275/2023' },
+            { icon: <LockIcon   size={11} strokeWidth={2.5} className="text-slate-400" />, text: 'Datos seguros' },
+            { icon: <CheckIcon  size={11} strokeWidth={2.5} className="text-blue-500" />, text: 'Hecho en Colombia' },
+          ].map(b => (
+            <span key={b.text} className="flex items-center gap-1 text-xs text-slate-500 font-medium">
+              {b.icon}{b.text}
+            </span>
           ))}
         </div>
 
@@ -149,7 +156,7 @@ export default function RegisterPage() {
 
             {error && (
               <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-                <span>⚠️</span>
+                <AlertCircleIcon size={15} strokeWidth={2} className="flex-shrink-0" />
                 <span>{error}</span>
               </div>
             )}

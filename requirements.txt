@@ -13,9 +13,6 @@ pydantic==2.7.1
 # IA (Anthropic Claude)
 anthropic==0.28.0
 
-# Pagos
-stripe==9.9.0
-
 # Base de datos (Supabase)
 supabase==2.4.6
 

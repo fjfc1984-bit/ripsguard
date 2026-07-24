@@ -8,34 +8,44 @@ import {
   AlertTriangleIcon, ChevronDownIcon, ChevronUpIcon, RefreshIcon,
 } from '@/components/ui/icons'
 
+// Matches AuditListItem del backend (GET /audits)
 interface AuditItem {
-  audit_id: string
-  status: 'valid' | 'invalid' | 'error'
-  total_errors: number
-  total_warnings: number
-  summary: string
-  processed_at: string
-  filename?: string
+  session_id:      string
+  nombre_archivo:  string
+  estado:          string
+  total_registros: number
+  total_errores:   number
+  total_criticos:  number
+  valor_en_riesgo: number
+  created_at:      string
+  procesado_at:    string | null
 }
 
 interface HistoryResponse {
-  audits: AuditItem[]
-  total: number
-  page: number
-  page_size: number
+  items:  AuditItem[]
+  total:  number
+  page:   number
+  pages:  number
 }
 
-function StatusBadge({ status, errors }: { status: string; errors: number }) {
-  if (status === 'valid' || errors === 0) {
+function StatusBadge({ errores, criticos }: { errores: number; criticos: number }) {
+  if (errores === 0) {
     return (
       <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded bg-green-100 text-green-700 uppercase tracking-wide">
         <CheckCircleIcon size={11} strokeWidth={2.5} /> Válido
       </span>
     )
   }
+  if (criticos > 0) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700 uppercase tracking-wide">
+        <XCircleIcon size={11} strokeWidth={2.5} /> {criticos} crítico{criticos !== 1 ? 's' : ''}
+      </span>
+    )
+  }
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700 uppercase tracking-wide">
-      <XCircleIcon size={11} strokeWidth={2.5} /> Con errores
+    <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-700 uppercase tracking-wide">
+      <AlertTriangleIcon size={11} strokeWidth={2.5} /> Advertencias
     </span>
   )
 }
@@ -47,12 +57,17 @@ function formatDate(iso: string) {
   })
 }
 
+function formatCOP(value: number) {
+  if (value === 0) return '—'
+  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(value)
+}
+
 export default function HistoryPage() {
-  const [data, setData]         = useState<HistoryResponse | null>(null)
-  const [loading, setLoading]   = useState(true)
-  const [error, setError]       = useState<string | null>(null)
-  const [page, setPage]         = useState(1)
-  const [sortAsc, setSortAsc]   = useState(false)
+  const [data, setData]       = useState<HistoryResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState<string | null>(null)
+  const [page, setPage]       = useState(1)
+  const [sortAsc, setSortAsc] = useState(false)
   const PAGE_SIZE = 15
 
   async function load(p: number) {
@@ -60,7 +75,7 @@ export default function HistoryPage() {
     setError(null)
     try {
       const result = await getAuditHistory(p, PAGE_SIZE)
-      setData(result)
+      setData(result as HistoryResponse)
       setPage(p)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Error cargando historial.')
@@ -71,13 +86,14 @@ export default function HistoryPage() {
 
   useEffect(() => { load(1) }, [])
 
-  const audits = data?.audits ?? []
-  const sorted = [...audits].sort((a, b) => {
-    const diff = new Date(a.processed_at).getTime() - new Date(b.processed_at).getTime()
-    return sortAsc ? diff : -diff
+  const items = data?.items ?? []
+  const sorted = [...items].sort((a, b) => {
+    const da = new Date(a.procesado_at ?? a.created_at).getTime()
+    const db = new Date(b.procesado_at ?? b.created_at).getTime()
+    return sortAsc ? da - db : db - da
   })
-  const total     = data?.total ?? 0
-  const totalPages = Math.ceil(total / PAGE_SIZE)
+  const total      = data?.total ?? 0
+  const totalPages = data?.pages ?? 1
 
   return (
     <div className="p-8 max-w-5xl">
@@ -123,7 +139,7 @@ export default function HistoryPage() {
       )}
 
       {/* Empty state */}
-      {!loading && !error && audits.length === 0 && (
+      {!loading && !error && items.length === 0 && (
         <div className="flex flex-col items-center justify-center gap-4 py-20 text-center">
           <div className="w-14 h-14 bg-slate-100 rounded-xl flex items-center justify-center">
             <HistoryIcon size={24} className="text-slate-400" strokeWidth={1.75} />
@@ -149,16 +165,16 @@ export default function HistoryPage() {
               <thead className="bg-slate-50 border-b border-slate-200">
                 <tr>
                   <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                    Archivo / ID
+                    Archivo
                   </th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
                     Estado
                   </th>
                   <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                    Errores
+                    Registros
                   </th>
-                  <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                    Advertencias
+                  <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                    Valor en riesgo
                   </th>
                   <th className="text-left px-4 py-3">
                     <button
@@ -177,45 +193,41 @@ export default function HistoryPage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {sorted.map(audit => (
-                  <tr key={audit.audit_id} className="hover:bg-slate-50 transition-colors">
+                  <tr key={audit.session_id} className="hover:bg-slate-50 transition-colors">
                     <td className="px-5 py-3.5">
-                      {audit.filename ? (
-                        <p className="font-medium text-slate-800 text-sm">{audit.filename}</p>
-                      ) : null}
-                      <p className="text-xs text-slate-400 font-mono mt-0.5">{audit.audit_id}</p>
+                      <p className="font-medium text-slate-800 text-sm truncate max-w-[200px]">
+                        {audit.nombre_archivo}
+                      </p>
+                      <p className="text-xs text-slate-400 font-mono mt-0.5">{audit.session_id.slice(0, 8)}…</p>
                     </td>
                     <td className="px-4 py-3.5">
-                      <StatusBadge status={audit.status} errors={audit.total_errors} />
+                      <StatusBadge errores={audit.total_errores} criticos={audit.total_criticos} />
                     </td>
                     <td className="px-4 py-3.5 text-center">
-                      {audit.total_errors > 0 ? (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-600">
-                          <XCircleIcon size={13} strokeWidth={2.5} />
-                          {audit.total_errors}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-slate-300 font-semibold">—</span>
-                      )}
+                      <span className="text-xs font-semibold text-slate-700 tabular-nums">
+                        {audit.total_registros.toLocaleString('es-CO')}
+                      </span>
                     </td>
-                    <td className="px-4 py-3.5 text-center">
-                      {audit.total_warnings > 0 ? (
-                        <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600">
-                          <AlertTriangleIcon size={13} strokeWidth={2.5} />
-                          {audit.total_warnings}
+                    <td className="px-4 py-3.5 text-right">
+                      {audit.valor_en_riesgo > 0 ? (
+                        <span className="text-xs font-semibold text-red-600 tabular-nums">
+                          {formatCOP(audit.valor_en_riesgo)}
                         </span>
                       ) : (
                         <span className="text-xs text-slate-300 font-semibold">—</span>
                       )}
                     </td>
                     <td className="px-4 py-3.5">
-                      <p className="text-xs text-slate-500">{formatDate(audit.processed_at)}</p>
+                      <p className="text-xs text-slate-500">
+                        {formatDate(audit.procesado_at ?? audit.created_at)}
+                      </p>
                     </td>
                     <td className="px-4 py-3.5 text-right">
                       <Link
-                        href={`/dashboard/audit/results?id=${audit.audit_id}`}
+                        href={`/dashboard/audit/results?id=${audit.session_id}`}
                         className="text-xs font-semibold text-blue-600 hover:text-blue-800 hover:underline whitespace-nowrap"
                       >
-                        Ver resultados →
+                        Ver reporte →
                       </Link>
                     </td>
                   </tr>
@@ -238,9 +250,7 @@ export default function HistoryPage() {
                 >
                   ← Anterior
                 </button>
-                <span className="text-xs text-slate-500">
-                  {page} / {totalPages}
-                </span>
+                <span className="text-xs text-slate-500">{page} / {totalPages}</span>
                 <button
                   onClick={() => load(page + 1)}
                   disabled={page >= totalPages || loading}

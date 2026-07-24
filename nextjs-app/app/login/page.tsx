@@ -3,6 +3,7 @@ import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
 import { useRouter } from 'next/navigation'
+import { AlertCircleIcon } from '@/components/ui/icons'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -63,9 +64,9 @@ export default function LoginPage() {
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="block text-sm font-medium text-slate-700">Contraseña</label>
-                <button type="button" className="text-xs text-blue-600 hover:underline">
+                <Link href="/forgot-password" className="text-xs text-blue-600 hover:underline">
                   ¿Olvidaste tu contraseña?
-                </button>
+                </Link>
               </div>
               <input
                 type="password"
@@ -79,7 +80,7 @@ export default function LoginPage() {
 
             {error && (
               <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-red-700 text-sm">
-                <span>⚠️</span>
+                <AlertCircleIcon size={15} strokeWidth={2} className="flex-shrink-0" />
                 <span>{error}</span>
               </div>
             )}

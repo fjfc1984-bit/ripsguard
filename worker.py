@@ -12,6 +12,7 @@ Seguridad:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from contextlib import asynccontextmanager
@@ -19,23 +20,26 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
+from supabase import create_client, Client as SupabaseClient
 
 from rips_parser import RIPSParser
 from validation_engine import ValidationEngine, AuditResult, Severidad
 from ai_corrector import AICorrector, merge_corrections_into_findings
 
+logger = logging.getLogger("ripsguard")
 
 # ─────────────────────────────────────────────
 # CONFIGURACIÓN
 # ─────────────────────────────────────────────
 
-SUPABASE_URL    = os.environ.get("SUPABASE_URL", "")
-SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")  # "JWT Secret" en Supabase → Settings → API
+SUPABASE_URL          = os.environ.get("SUPABASE_URL", "")
+SUPABASE_JWT_SECRET   = os.environ.get("SUPABASE_JWT_SECRET", "")
+SUPABASE_SERVICE_KEY  = os.environ.get("SUPABASE_SERVICE_KEY", "")  # service_role key — solo backend
 
 # Orígenes permitidos — NUNCA usar "*" en producción con credentials=True
 ALLOWED_ORIGINS = [
@@ -93,10 +97,18 @@ class AuditReportResponse(BaseModel):
 
 
 # ─────────────────────────────────────────────
-# ALMACENAMIENTO EN MEMORIA (MVP)
-# TODO producción: reemplazar con Supabase client
+# SUPABASE ADMIN CLIENT
 # ─────────────────────────────────────────────
 
+def get_supabase() -> SupabaseClient | None:
+    """Retorna cliente Supabase con service_role. None si no está configurado."""
+    if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+        return create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+    logger.warning("SUPABASE_SERVICE_KEY no configurado — persistencia deshabilitada")
+    return None
+
+
+# Caché en memoria: fallback si Supabase no está disponible
 _sessions: dict[str, dict] = {}
 
 
@@ -264,16 +276,41 @@ async def upload_rips(
             corrections = corrector.correct_batch(result.findings, registros_map)
             result.findings = merge_corrections_into_findings(result.findings, corrections)
 
-        # 4. PERSIST (MVP: en memoria; TODO: Supabase insert)
+        # 4. PERSIST — Supabase + caché en memoria
+        procesado_at = datetime.utcnow().isoformat()
         _sessions[session_id].update({
             "estado":          "completado",
-            "procesado_at":    datetime.utcnow().isoformat(),
+            "procesado_at":    procesado_at,
             "total_registros": result.total_registros,
             "total_errores":   result.total_errores,
             "total_criticos":  result.total_criticos,
+            "total_advertencias": result.total_advertencias,
             "valor_en_riesgo": result.valor_en_riesgo,
             "result":          result,
         })
+
+        # Persistir en Supabase (no bloquear si falla)
+        try:
+            sb = get_supabase()
+            if sb:
+                sb.table("audit_sessions").insert({
+                    "id":                  session_id,
+                    "tenant_id":           tenant_id,
+                    "nombre_archivo":      file.filename,
+                    "tipo_archivo":        "zip" if suffix == ".zip" else "json",
+                    "tamaño_bytes":        len(content),
+                    "estado":              "completado",
+                    "total_registros":     result.total_registros,
+                    "total_errores":       result.total_errores,
+                    "total_criticos":      result.total_criticos,
+                    "total_advertencias":  result.total_advertencias,
+                    "valor_total_cop":     int(result.valor_total),
+                    "valor_en_riesgo_cop": int(result.valor_en_riesgo),
+                    "porcentaje_riesgo":   float(result.porcentaje_riesgo),
+                    "procesado_at":        procesado_at,
+                }).execute()
+        except Exception as db_err:
+            logger.warning(f"[audit/upload] Error persistiendo en Supabase: {db_err}")
 
     except Exception as exc:
         _sessions[session_id].update({
@@ -297,6 +334,121 @@ async def upload_rips(
         total_errores=sess.get("total_errores", 0),
         total_criticos=sess.get("total_criticos", 0),
         valor_en_riesgo=sess.get("valor_en_riesgo", 0.0),
+    )
+
+
+class AuditListItem(BaseModel):
+    session_id:      str
+    nombre_archivo:  str
+    estado:          str
+    total_registros: int
+    total_errores:   int
+    total_criticos:  int
+    valor_en_riesgo: float
+    created_at:      str
+    procesado_at:    str | None
+
+
+class AuditListResponse(BaseModel):
+    items:   list[AuditListItem]
+    total:   int
+    page:    int
+    pages:   int
+
+
+@app.get("/audits", response_model=AuditListResponse)
+async def list_audits(
+    page:      int = Query(1, ge=1),
+    page_size: int = Query(15, ge=1, le=100),
+    tenant_id: str = Depends(get_tenant_id),
+):
+    """
+    Lista el historial de auditorías del tenant con paginación.
+    Prioriza Supabase; fallback a caché en memoria.
+    """
+    sb = get_supabase()
+
+    if sb:
+        # Consultar Supabase con paginación
+        offset = (page - 1) * page_size
+        try:
+            count_resp = (
+                sb.table("audit_sessions")
+                .select("id", count="exact")
+                .eq("tenant_id", tenant_id)
+                .eq("estado", "completado")
+                .execute()
+            )
+            total = count_resp.count or 0
+
+            data_resp = (
+                sb.table("audit_sessions")
+                .select(
+                    "id,nombre_archivo,estado,total_registros,"
+                    "total_errores,total_criticos,valor_en_riesgo_cop,"
+                    "created_at,procesado_at"
+                )
+                .eq("tenant_id", tenant_id)
+                .eq("estado", "completado")
+                .order("created_at", desc=True)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+
+            items = [
+                AuditListItem(
+                    session_id=row["id"],
+                    nombre_archivo=row["nombre_archivo"],
+                    estado=row["estado"],
+                    total_registros=row.get("total_registros") or 0,
+                    total_errores=row.get("total_errores") or 0,
+                    total_criticos=row.get("total_criticos") or 0,
+                    valor_en_riesgo=float(row.get("valor_en_riesgo_cop") or 0),
+                    created_at=row["created_at"],
+                    procesado_at=row.get("procesado_at"),
+                )
+                for row in (data_resp.data or [])
+            ]
+
+            return AuditListResponse(
+                items=items,
+                total=total,
+                page=page,
+                pages=max(1, -(-total // page_size)),  # ceil division
+            )
+
+        except Exception as db_err:
+            logger.warning(f"[audits] Error consultando Supabase: {db_err}")
+            # Caer al fallback en memoria
+
+    # Fallback: caché en memoria (sessions actuales del servidor)
+    tenant_sessions = [
+        s for s in _sessions.values()
+        if s.get("tenant_id") == tenant_id and s.get("estado") == "completado"
+    ]
+    tenant_sessions.sort(key=lambda s: s["created_at"], reverse=True)
+    total = len(tenant_sessions)
+    start = (page - 1) * page_size
+    page_items = tenant_sessions[start : start + page_size]
+
+    return AuditListResponse(
+        items=[
+            AuditListItem(
+                session_id=s["session_id"],
+                nombre_archivo=s["nombre_archivo"],
+                estado=s["estado"],
+                total_registros=s.get("total_registros", 0),
+                total_errores=s.get("total_errores", 0),
+                total_criticos=s.get("total_criticos", 0),
+                valor_en_riesgo=s.get("valor_en_riesgo", 0.0),
+                created_at=s["created_at"],
+                procesado_at=s.get("procesado_at"),
+            )
+            for s in page_items
+        ],
+        total=total,
+        page=page,
+        pages=max(1, -(-total // page_size)),
     )
 
 
