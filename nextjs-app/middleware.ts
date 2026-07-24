@@ -36,6 +36,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
+  // Pasar pathname al layout como header (necesario para nav activo)
+  supabaseResponse.headers.set('x-pathname', request.nextUrl.pathname)
+
   return supabaseResponse
 }
 

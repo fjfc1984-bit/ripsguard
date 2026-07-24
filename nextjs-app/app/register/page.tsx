@@ -1,9 +1,11 @@
 'use client'
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { createBrowserClient } from '@supabase/ssr'
+import { useRouter } from 'next/navigation'
 
 export default function RegisterPage() {
+  const router = useRouter()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [orgName, setOrgName] = useState('')
@@ -11,10 +13,11 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null)
   const [step, setStep] = useState<'form' | 'confirm'>('form')
 
-  const supabase = createBrowserClient(
+  // Fix: singleton — no recrear en cada render
+  const supabase = useMemo(() => createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  )
+  ), [])
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault()
@@ -34,7 +37,8 @@ export default function RegisterPage() {
       return
     }
     if (data.session) {
-      window.location.href = '/dashboard'
+      router.push('/dashboard')
+      router.refresh()
     } else {
       setStep('confirm')
     }
