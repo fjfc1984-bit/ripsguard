@@ -41,13 +41,14 @@ export async function POST(request: Request) {
 
   const secretKey = process.env.BOLD_SECRET_KEY!
 
-  // Verificar firma (si Bold la envía en tu plan de integración)
-  // Si Bold no envía signature, comenta las siguientes líneas y verifica por order_id
-  if (secretKey && signature) {
-    if (!verifyBoldSignature(body, signature, secretKey)) {
-      console.error('[bold/webhook] Firma inválida')
-      return NextResponse.json({ error: 'Firma inválida' }, { status: 400 })
-    }
+  // Verificar firma siempre — nunca procesar si falta o es inválida
+  if (!secretKey) {
+    console.error('[bold/webhook] BOLD_SECRET_KEY no configurada')
+    return NextResponse.json({ error: 'Configuración inválida' }, { status: 500 })
+  }
+  if (!signature || !verifyBoldSignature(body, signature, secretKey)) {
+    console.error('[bold/webhook] Firma ausente o inválida')
+    return NextResponse.json({ error: 'Firma inválida' }, { status: 401 })
   }
 
   let event: Record<string, unknown>
@@ -75,24 +76,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ received: true })
   }
 
-  // Extraer userId y planId del order_id
-  // Formato: RIPS-{userId8chars}-{timestamp}
-  // El planId lo guardamos en extra-data-1 del botón
-  const planId = event.extra_data_1 as string || event.extraData1 as string || 'starter'
-  const userIdPrefix = orderId.split('-')[1]?.toLowerCase()
+  // Extraer planId y userId completo desde extra-data
+  // extra-data-1 = planId, extra-data-2 = userId (completo, hasta 60 chars)
+  const planId  = (event.extra_data_1 as string) || (event.extraData1 as string) || 'starter'
+  const userId  = (event.extra_data_2 as string) || (event.extraData2 as string) || ''
 
   const supabase = getSupabaseAdmin()
 
-  // Buscar el usuario por prefijo de ID (8 primeros chars sin guiones)
+  if (!userId) {
+    console.error('[bold/webhook] userId ausente en extra_data_2, orderId:', orderId)
+    return NextResponse.json({ received: true, warning: 'user_id_missing' })
+  }
+
+  // Búsqueda exacta por userId — sin ambigüedad
   const { data: users, error: userErr } = await supabase
     .from('users')
     .select('id, tenant_id')
-    .filter('id', 'ilike', `${userIdPrefix}%`)
+    .eq('id', userId)
     .limit(1)
 
   if (userErr || !users || users.length === 0) {
-    console.error('[bold/webhook] User not found for orderId:', orderId, userIdPrefix)
-    // Retornar 200 para que Bold no reintente
+    console.error('[bold/webhook] User not found:', userId, 'orderId:', orderId)
     return NextResponse.json({ received: true, warning: 'user_not_found' })
   }
 

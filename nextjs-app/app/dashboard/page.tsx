@@ -1,11 +1,12 @@
 import Link from 'next/link'
 import { getSubscriptionStatus } from '@/lib/subscription'
 import { createClient } from '@/lib/supabase/server'
+import { SearchIcon, BarChartIcon, AlertTriangleIcon, ShieldIcon, ZapIcon, HistoryIcon } from '@/components/ui/icons'
 
 async function getDashboardStats(userId: string) {
   const supabase = await createClient()
   const now = new Date()
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+  const startOfDay   = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
   const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString()
 
   const [todayRes, monthRes] = await Promise.all([
@@ -16,112 +17,117 @@ async function getDashboardStats(userId: string) {
   ])
 
   const totalErrors = (monthRes.data ?? []).reduce((acc, a) => acc + (a.total_errors || 0), 0)
-
-  return {
-    today: todayRes.count ?? 0,
-    month: monthRes.count ?? 0,
-    errors: totalErrors,
-  }
+  return { today: todayRes.count ?? 0, month: monthRes.count ?? 0, errors: totalErrors }
 }
+
+function greeting() {
+  const h = new Date().getHours()
+  if (h < 12) return 'Buenos días'
+  if (h < 18) return 'Buenas tardes'
+  return 'Buenas noches'
+}
+
+const STATS = [
+  { key: 'today',  label: 'Auditorías hoy',          icon: SearchIcon,        color: 'text-blue-600',   bg: 'bg-blue-50'   },
+  { key: 'month',  label: 'Archivos este mes',        icon: BarChartIcon,      color: 'text-indigo-600', bg: 'bg-indigo-50' },
+  { key: 'errors', label: 'Errores detectados / mes', icon: AlertTriangleIcon, color: 'text-red-500',    bg: 'bg-red-50'    },
+] as const
 
 export default async function DashboardPage() {
   const sub = await getSubscriptionStatus()
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-
-  const stats = user ? await getDashboardStats(user.id).catch(() => ({ today: 0, month: 0, errors: 0 }))
+  const stats = user
+    ? await getDashboardStats(user.id).catch(() => ({ today: 0, month: 0, errors: 0 }))
     : { today: 0, month: 0, errors: 0 }
-
-  const greeting = () => {
-    const h = new Date().getHours()
-    if (h < 12) return 'Buenos días'
-    if (h < 18) return 'Buenas tardes'
-    return 'Buenas noches'
-  }
 
   return (
     <div className="p-8 max-w-5xl">
       {/* Header */}
       <div className="mb-8">
-        <p className="text-slate-500 text-sm font-medium">{greeting()}</p>
-        <h2 className="text-2xl font-bold text-slate-900 mt-0.5">Panel de Control</h2>
+        <p className="text-sm text-slate-400 font-medium">{greeting()}</p>
+        <h1 className="text-2xl font-bold text-slate-900 mt-0.5 tracking-tight">Panel de control</h1>
       </div>
 
-      {/* Stats cards */}
+      {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Hoy</span>
-            <span className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center text-lg">🔍</span>
-          </div>
-          <div className="text-3xl font-bold text-slate-900">{stats.today}</div>
-          <div className="text-sm text-slate-500 mt-1">Auditorías realizadas</div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Este mes</span>
-            <span className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-lg">📂</span>
-          </div>
-          <div className="text-3xl font-bold text-slate-900">{stats.month}</div>
-          <div className="text-sm text-slate-500 mt-1">Archivos procesados</div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Errores</span>
-            <span className="w-9 h-9 rounded-xl bg-red-50 flex items-center justify-center text-lg">⚠️</span>
-          </div>
-          <div className="text-3xl font-bold text-slate-900">{stats.errors}</div>
-          <div className="text-sm text-slate-500 mt-1">Detectados este mes</div>
-        </div>
+        {STATS.map(s => {
+          const Icon = s.icon
+          const value = stats[s.key]
+          return (
+            <div key={s.key} className="bg-white rounded-xl border border-slate-200 p-5">
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">{s.label}</p>
+                  <p className="text-3xl font-bold text-slate-900 tabular-nums">{value}</p>
+                </div>
+                <div className={`w-9 h-9 rounded-lg ${s.bg} flex items-center justify-center flex-shrink-0`}>
+                  <Icon size={17} className={s.color} strokeWidth={2} />
+                </div>
+              </div>
+            </div>
+          )
+        })}
       </div>
 
-      {/* Main CTA */}
-      <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-7 text-white mb-6 shadow-lg shadow-blue-200">
-        <div className="flex items-start justify-between">
-          <div>
-            <h3 className="text-xl font-bold mb-2">🚀 Nueva Auditoría RIPS</h3>
-            <p className="text-blue-100 text-sm max-w-md">
-              Sube un archivo RIPS JSON y lo validamos contra la Resolución 2275 de 2023 en segundos.
-              {sub.plan === 'starter' && ' Tu plan Starter permite hasta 10 MB.'}
-              {sub.plan === 'pro' && ' Tu plan Pro permite hasta 50 MB.'}
-            </p>
-          </div>
-          <span className="text-5xl opacity-20 ml-4">🔍</span>
+      {/* CTA principal */}
+      <div className="bg-slate-900 rounded-xl p-6 mb-6 flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-bold text-white mb-1">Nueva auditoría RIPS</h2>
+          <p className="text-slate-400 text-sm max-w-xl">
+            Valida archivos JSON contra la Resolución 2275 de 2023 en segundos.
+            {sub.plan === 'starter' && ' Hasta 10 MB por archivo.'}
+            {sub.plan === 'pro'     && ' Hasta 50 MB por archivo.'}
+          </p>
         </div>
         {sub.isActive ? (
           <Link
             href="/dashboard/audit"
-            className="inline-block mt-5 bg-white text-blue-700 px-6 py-2.5 rounded-xl text-sm font-bold hover:bg-blue-50 transition shadow-sm"
+            className="flex-shrink-0 bg-blue-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-blue-500 transition whitespace-nowrap"
           >
-            Iniciar auditoría →
+            Iniciar auditoría
           </Link>
         ) : (
           <Link
             href="/dashboard/billing"
-            className="inline-block mt-5 bg-white text-blue-700 px-6 py-2.5 rounded-xl text-sm font-bold hover:bg-blue-50 transition shadow-sm"
+            className="flex-shrink-0 bg-white text-slate-900 text-sm font-semibold px-5 py-2.5 rounded-lg hover:bg-slate-100 transition whitespace-nowrap"
           >
-            Activar plan para auditar →
+            Activar plan
           </Link>
         )}
       </div>
 
       {/* Info cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <div className="text-2xl mb-2">📋</div>
-          <h4 className="font-semibold text-slate-900 mb-1 text-sm">Resolución 2275/2023</h4>
-          <p className="text-slate-500 text-xs leading-relaxed">
-            Validamos contra todos los módulos: AF, AT, AC, AM, AN, AU y contratos.
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2.5 mb-2">
+            <ShieldIcon size={16} className="text-blue-600" strokeWidth={2} />
+            <h3 className="text-sm font-semibold text-slate-900">Resolución 2275/2023</h3>
+          </div>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Módulos AF, AT, AC, AM, AN y AU. Cobertura completa de la norma vigente.
           </p>
         </div>
-        <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
-          <div className="text-2xl mb-2">🤖</div>
-          <h4 className="font-semibold text-slate-900 mb-1 text-sm">IA Correctora</h4>
-          <p className="text-slate-500 text-xs leading-relaxed">
-            Sugerencias automáticas de corrección con IA para cada error detectado.
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2.5 mb-2">
+            <ZapIcon size={16} className="text-indigo-600" strokeWidth={2} />
+            <h3 className="text-sm font-semibold text-slate-900">IA correctora</h3>
+          </div>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Sugerencias automáticas para cada error. Menos tiempo de corrección manual.
           </p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center gap-2.5 mb-2">
+            <HistoryIcon size={16} className="text-slate-600" strokeWidth={2} />
+            <h3 className="text-sm font-semibold text-slate-900">Historial completo</h3>
+          </div>
+          <p className="text-xs text-slate-500 leading-relaxed">
+            Todas tus auditorías anteriores con resultados y reportes.
+          </p>
+          <Link href="/dashboard/history" className="text-xs text-blue-600 font-medium mt-2 inline-block hover:underline">
+            Ver historial →
+          </Link>
         </div>
       </div>
     </div>
