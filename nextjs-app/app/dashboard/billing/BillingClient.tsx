@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
 import type { SubscriptionStatus } from '@/lib/subscription'
@@ -17,7 +17,6 @@ const PLANS = [
       'Exportar reporte JSON',
       'Soporte por email',
     ],
-    priceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_STARTER,
     highlight: false,
   },
   {
@@ -33,51 +32,123 @@ const PLANS = [
       'Soporte prioritario',
       'Multi-usuario (3 seats)',
     ],
-    priceId: process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO,
     highlight: true,
   },
 ]
+
+interface BoldOrderData {
+  orderId: string
+  amount: number
+  currency: string
+  description: string
+  integrityHash: string
+  redirectionUrl: string
+  planId: string
+  userId: string
+}
 
 function BillingContent({ subscription }: { subscription: SubscriptionStatus }) {
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [orderData, setOrderData] = useState<BoldOrderData | null>(null)
+  const boldContainerRef = useRef<HTMLDivElement>(null)
+  const boldScriptRef = useRef<HTMLScriptElement | null>(null)
 
   const successParam = searchParams.get('success')
   const canceledParam = searchParams.get('canceled')
   const reason = searchParams.get('reason')
 
-  async function handleSubscribe(priceId: string | undefined, planName: string) {
-    if (!priceId) {
-      setError('Configuración de precios no disponible. Contacta soporte.')
-      return
+  // Carga el script de Bold una sola vez al montar el componente
+  useEffect(() => {
+    if (document.querySelector('script[src*="boldPaymentButton"]')) return
+    const script = document.createElement('script')
+    script.src = 'https://checkout.bold.co/library/boldPaymentButton.js'
+    script.async = true
+    document.head.appendChild(script)
+    return () => {
+      // No remover el script al desmontar para evitar recargas
     }
+  }, [])
+
+  // Cuando tenemos orderData, inyectamos el botón Bold y lo activamos
+  useEffect(() => {
+    if (!orderData || !boldContainerRef.current) return
+
+    // Limpiar botón anterior si existe
+    if (boldScriptRef.current) {
+      boldScriptRef.current.remove()
+      boldScriptRef.current = null
+    }
+    boldContainerRef.current.innerHTML = ''
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://www.ripsguard.com'
+
+    // Crear script del botón Bold con todos los atributos
+    const boldBtn = document.createElement('script')
+    boldBtn.setAttribute('data-bold-button', 'dark-L')
+    boldBtn.setAttribute('data-order-id', orderData.orderId)
+    boldBtn.setAttribute('data-api-key', process.env.NEXT_PUBLIC_BOLD_API_KEY || '')
+    boldBtn.setAttribute('data-amount', String(orderData.amount))
+    boldBtn.setAttribute('data-currency', orderData.currency)
+    boldBtn.setAttribute('data-integrity-signature', orderData.integrityHash)
+    boldBtn.setAttribute('data-description', orderData.description)
+    boldBtn.setAttribute('data-redirection-url', orderData.redirectionUrl)
+    boldBtn.setAttribute('data-render-mode', 'embedded') // Abre como modal en la misma página
+    boldBtn.setAttribute('data-extra-data-1', orderData.planId)  // Para webhook: identificar plan
+    boldBtn.setAttribute('data-extra-data-2', orderData.userId.substring(0, 60)) // Para webhook: usuario
+
+    boldContainerRef.current.appendChild(boldBtn)
+    boldScriptRef.current = boldBtn
+
+    // Bold necesita un momento para inicializar el botón en el DOM
+    // Luego lo clickeamos automáticamente para abrir el checkout
+    const timer = setTimeout(() => {
+      const btn = boldContainerRef.current?.querySelector('button, [data-bold-checkout]')
+      if (btn && btn instanceof HTMLElement) {
+        btn.click()
+      } else {
+        // Fallback: mostrar el contenedor para que el usuario haga clic
+        if (boldContainerRef.current) {
+          boldContainerRef.current.style.display = 'block'
+        }
+      }
+      setLoading(null)
+    }, 800)
+
+    return () => clearTimeout(timer)
+  }, [orderData])
+
+  async function handleSubscribe(planId: string, planName: string) {
     setLoading(planName)
     setError(null)
+    setOrderData(null)
+
     try {
-      const res = await fetch('/api/stripe/checkout', {
+      const res = await fetch('/api/bold/create-order', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ priceId }),
+        body: JSON.stringify({ planId }),
       })
 
       if (res.status === 429) {
         setError('Demasiados intentos. Espera unos minutos e intenta de nuevo.')
+        setLoading(null)
         return
       }
 
       const data = await res.json()
       if (!res.ok) {
-        setError(data.error ?? 'Error al iniciar el proceso de pago.')
+        setError(data.error ?? 'Error al iniciar el pago.')
+        setLoading(null)
         return
       }
 
-      if (data.url) {
-        window.location.href = data.url
-      }
+      // Trigger Bold button render + auto-click via useEffect
+      setOrderData(data)
+
     } catch {
       setError('Error de conexión. Verifica tu internet e intenta de nuevo.')
-    } finally {
       setLoading(null)
     }
   }
@@ -132,6 +203,7 @@ function BillingContent({ subscription }: { subscription: SubscriptionStatus }) 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 max-w-2xl">
         {PLANS.map(plan => {
           const isCurrent = subscription.plan === plan.id && subscription.isActive
+          const isLoading = loading === plan.name
           return (
             <div
               key={plan.name}
@@ -167,8 +239,8 @@ function BillingContent({ subscription }: { subscription: SubscriptionStatus }) 
               </ul>
 
               <button
-                onClick={() => handleSubscribe(plan.priceId, plan.name)}
-                disabled={loading === plan.name || isCurrent || !plan.priceId}
+                onClick={() => handleSubscribe(plan.id, plan.name)}
+                disabled={isLoading || isCurrent}
                 className={`w-full py-2 rounded-lg text-sm font-semibold transition
                   ${isCurrent
                     ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
@@ -177,8 +249,8 @@ function BillingContent({ subscription }: { subscription: SubscriptionStatus }) 
                       : 'bg-gray-900 text-white hover:bg-gray-800'
                   } disabled:opacity-50`}
               >
-                {loading === plan.name
-                  ? 'Redirigiendo a Stripe...'
+                {isLoading
+                  ? 'Abriendo pago...'
                   : isCurrent
                     ? 'Plan activo'
                     : 'Suscribirse'}
@@ -188,9 +260,19 @@ function BillingContent({ subscription }: { subscription: SubscriptionStatus }) 
         })}
       </div>
 
+      {/* Contenedor oculto del botón Bold — Bold lo inicializa aquí */}
+      <div
+        ref={boldContainerRef}
+        style={{ display: 'none', position: 'fixed', bottom: 0, left: 0 }}
+        aria-hidden="true"
+      />
+
       <p className="mt-8 text-xs text-gray-400">
-        Los pagos son procesados de forma segura por Stripe. Cancela cuando quieras.
-        IVA incluido según normativa colombiana.
+        Pagos procesados de forma segura por{' '}
+        <a href="https://bold.co" target="_blank" rel="noopener noreferrer" className="underline">
+          Bold
+        </a>{' '}
+        · PSE, tarjetas débito/crédito, Nequi, Daviplata · IVA incluido según normativa colombiana.
       </p>
     </div>
   )
