@@ -25,7 +25,7 @@ const PLANS = {
 export async function POST(request: Request) {
   // ── 1. Rate limiting ──────────────────────────────────────────────────
   const ip = getClientIp(request)
-  const rl = rateLimit(`bold-order:${ip}`, 5, 10 * 60 * 1000)
+  const rl = rateLimit(`bold-order:${ip}`, 20, 10 * 60 * 1000)
   if (!rl.success) {
     return NextResponse.json(
       { error: 'Demasiados intentos. Intenta en unos minutos.' },
