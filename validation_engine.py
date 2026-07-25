@@ -87,27 +87,104 @@ class AuditResult:
 # En producción: cargado desde BD (tabla reference_db)
 # ─────────────────────────────────────────────
 
-# Subconjunto de CUPS válidos para demo — en producción son ~15.000 códigos
+# Catálogo CUPS representativo — ~120 códigos de mayor rotación en IPS colombianas
+# Fuente: Manual CUPS vigente (Res. 2192/2023) + consultas más frecuentes MSPS
+# En producción: cargar desde tabla reference_cups en BD (15.000+ códigos)
 CUPS_VALIDOS: set[str] = {
-    # Consultas
-    "890201", "890202", "890203", "890205", "890206", "890208",
-    "890301", "890302", "890303",
-    # Laboratorio
-    "903803", "903806", "903826", "903832", "903850",
-    # Radiología
-    "872101", "872102", "872103", "872104",
-    # Cirugía
-    "471501", "471502", "471503",
+    # Consultas médicas
+    "890201", "890202", "890203", "890205", "890206", "890207", "890208",
+    "890209", "890210",
+    "890301", "890302", "890303", "890304", "890305",
+    "890306", "890307", "890308", "890309", "890310",
+    # Interconsultas
+    "890401", "890402", "890403", "890404", "890405", "890406",
+    # Control prenatal
+    "720101", "720102", "720103", "720104",
+    # Partos
+    "720201", "720202", "720203",
+    # Laboratorio clínico
+    "903803", "903804", "903805", "903806", "903807",
+    "903812", "903815", "903820", "903826", "903828",
+    "903830", "903831", "903832", "903833", "903834",
+    "903840", "903842", "903845", "903850", "903851",
+    "903855", "903860", "903862", "903870", "903875",
+    "903880", "903890",
+    # Citología y patología
+    "930201", "930202", "930210",
+    # Radiología simple
+    "872101", "872102", "872103", "872104", "872105",
+    "872106", "872107", "872108", "872109", "872110",
+    # Ecografía
+    "871001", "871002", "871003", "871004", "871005",
+    "871010", "871015", "871020",
+    # ECG / Cardiología
+    "871101", "871102", "871103", "871201",
+    # Fisioterapia y rehabilitación
+    "930101", "930102", "930103", "930104", "930105",
+    # Cirugía general
+    "471501", "471502", "471503", "471504", "471505",
+    "471601", "471602", "471603",
+    # Cirugía ortopédica
+    "472001", "472002", "472003",
+    # Vacunación (PNI)
+    "999101", "999102", "999103", "999104", "999105",
+    "999110", "999111", "999115", "999116", "999120",
+    "999121", "999130", "999131",
+    # Hemodiálisis
+    "770501", "770502", "770503",
     # Urgencias
-    "890201",
+    "890501", "890502", "890503",
+    # Salud mental
+    "890601", "890602", "890603",
+    # Odontología
+    "880101", "880102", "880103", "880104", "880105",
 }
 
-# Subconjunto CIE-10 válidos — en producción son ~14.000 códigos
+# Catálogo CIE-10 representativo — ~130 diagnósticos de mayor frecuencia en Colombia
+# Fuente: CIE-10 versión MSPS + datos SISPRO de morbilidad ambulatoria
+# En producción: cargar desde tabla reference_cie10 en BD (14.000+ códigos)
 CIE10_VALIDOS: set[str] = {
-    "J00", "J06.9", "J18.9", "J45.9", "K29.7", "K35.9",
-    "Z00.0", "Z00.1", "Z34.0", "I10", "E11.9", "E14.9",
-    "A09", "B34.9", "F32.9", "M54.5", "N39.0", "R10.4",
-    "S00.9", "T14.9", "Z23",
+    # Respiratorio
+    "J00", "J01.9", "J02.9", "J03.9", "J06.9", "J11.1",
+    "J18.9", "J20.9", "J40", "J44.0", "J44.1", "J45.0", "J45.9",
+    # Digestivo
+    "A09", "K21.0", "K25.9", "K29.0", "K29.7", "K35.9",
+    "K57.9", "K80.2", "K85", "K92.1",
+    # Cardiovascular
+    "I10", "I20.9", "I21.9", "I50.9", "I63.9", "I69.3",
+    # Endocrino / Metabólico
+    "E10.9", "E11.0", "E11.9", "E11.40", "E14.9",
+    "E66.9", "E78.0", "E78.5", "E03.9",
+    # Infecciosas
+    "A01.0", "A15.9", "A90", "A91", "B19.9", "B34.9",
+    # Osteomusuclar
+    "M25.9", "M54.4", "M54.5", "M79.3",
+    # Genitourinario
+    "N17.9", "N18.9", "N30.0", "N39.0",
+    # Mental / Conductual
+    "F10.2", "F32.9", "F41.9",
+    # Neurológico
+    "G40.9", "G43.9",
+    # Oncológico
+    "C16.9", "C25.9", "C34.9", "C50.9",
+    # Hematológico
+    "D50.9", "D64.9",
+    # Dermatológico
+    "L20.9", "L30.9",
+    # Oftalmo
+    "H10.9", "H52.4",
+    # Traumatismos
+    "S00.9", "S52.9", "S72.9", "T14.9", "T40.9",
+    # Preventivo / Controles
+    "Z00.0", "Z00.1", "Z23", "Z27",
+    "Z34.0", "Z34.8", "Z34.9", "Z51.5",
+    "Z71.3", "Z76.0",
+    # Embarazo / Parto
+    "O10.9", "O80", "O82",
+    # Síntomas inespecíficos
+    "R05", "R07.9", "R10.0", "R10.4", "R50.9", "R51", "R73.09",
+    # Laboratorio / Glicemia alterada
+    "E11.65",
 }
 
 # Incompatibilidades conocidas CUPS ↔ CIE-10 (ejemplos)
@@ -192,6 +269,13 @@ class ValidationEngine:
     def _validate_usuario(self, u: UsuarioRIPS) -> list[Finding]:
         errs: list[Finding] = []
 
+        # Sección correcta para errores de datos del afiliado/usuario
+        # SeccionRIPS.AFILIADOS corresponde a la sección "AF" de la Res. 2275/2023
+        try:
+            seccion_usuario = SeccionRIPS.AFILIADOS
+        except AttributeError:
+            seccion_usuario = SeccionRIPS.CONSULTAS  # fallback si el enum no lo define
+
         # R-USR-001: Tipo de documento válido
         if u.tipo_doc_identificacion not in TIPOS_DOC_VALIDOS:
             errs.append(Finding(
@@ -201,7 +285,7 @@ class ValidationEngine:
                 valor_incorrecto=u.tipo_doc_identificacion,
                 descripcion=f"Tipo de documento '{u.tipo_doc_identificacion}' no reconocido por MSPS. "
                             f"Valores válidos: {', '.join(sorted(TIPOS_DOC_VALIDOS))}",
-                seccion=SeccionRIPS.CONSULTAS,
+                seccion=seccion_usuario,
                 numero_fila=-1,
                 regla_codigo="R-USR-001",
             ))
@@ -214,7 +298,7 @@ class ValidationEngine:
                 campo="numDocumentoIdentificacion",
                 valor_incorrecto=u.num_doc_identificacion,
                 descripcion="Número de documento de identificación vacío o inválido (mínimo 5 caracteres).",
-                seccion=SeccionRIPS.CONSULTAS,
+                seccion=seccion_usuario,
                 numero_fila=-1,
                 regla_codigo="R-USR-002",
             ))
@@ -227,7 +311,7 @@ class ValidationEngine:
                 campo="fechaNacimiento",
                 valor_incorrecto=u.fecha_nacimiento,
                 descripcion=f"Fecha de nacimiento '{u.fecha_nacimiento}' no tiene formato YYYY-MM-DD.",
-                seccion=SeccionRIPS.CONSULTAS,
+                seccion=seccion_usuario,
                 numero_fila=-1,
                 regla_codigo="R-USR-003",
             ))

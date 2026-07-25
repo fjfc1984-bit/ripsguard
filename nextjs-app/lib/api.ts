@@ -2,31 +2,97 @@
  * Cliente HTTP para el backend FastAPI.
  * Envía el JWT de Supabase en Authorization header para que
  * el backend valide la identidad y el tenant del usuario.
+ *
+ * Tipos alineados con los modelos Pydantic del worker.py:
+ *   - SessionStatus      → /audit/upload (POST 202)
+ *   - AuditReportResponse → /audit/{id}/report (GET)
+ *   - AuditListResponse  → /audits (GET)
  */
 
 import { createClient } from '@/lib/supabase/client'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL
+  ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '')
+  : (process.env.NODE_ENV === 'production'
+      ? 'https://ripsguard-production.up.railway.app'
+      : 'http://localhost:8000')
 
-export interface AuditError {
-  code: string
-  message: string
-  severity: 'error' | 'warning'
-  path?: string
-  suggestion?: string
+// ─────────────────────────────────────────────
+// Tipos del backend (espejo exacto de worker.py)
+// ─────────────────────────────────────────────
+
+/** Respuesta de POST /audit/upload */
+export interface SessionStatus {
+  session_id:      string
+  estado:          string          // 'processing' | 'completado' | 'error'
+  nombre_archivo:  string
+  created_at:      string
+  procesado_at:    string | null
+  total_registros: number
+  total_errores:   number
+  total_criticos:  number
+  valor_en_riesgo: number
 }
 
-export interface AuditResult {
-  audit_id: string
-  status: 'valid' | 'invalid' | 'error'
-  total_errors: number
-  total_warnings: number
-  errors: AuditError[]
-  summary: string
-  processed_at: string
+/** Un hallazgo individual del reporte */
+export interface FindingResponse {
+  tipo_error:       string
+  severidad:        'critico' | 'advertencia' | 'info'
+  campo:            string
+  valor_incorrecto: string | null
+  descripcion:      string
+  seccion:          string
+  numero_fila:      number
+  valor_en_riesgo:  number
+  regla_codigo:     string
+  sugerencia_ia:    string | null
 }
 
-/** Obtiene el access token JWT del usuario actual. */
+/** Respuesta de GET /audit/{id}/report */
+export interface AuditReportResponse {
+  session_id:           string
+  tenant_id:            string
+  total_registros:      number
+  total_errores:        number
+  total_criticos:       number
+  total_advertencias:   number
+  valor_total:          number
+  valor_en_riesgo:      number
+  porcentaje_riesgo:    number
+  findings:             FindingResponse[]
+  resumen_por_seccion:  Record<string, {
+    criticos:        number
+    advertencias:    number
+    valor_en_riesgo: number
+  }>
+  resumen_por_tipo_error: Record<string, number>
+}
+
+/** Un ítem del historial de auditorías */
+export interface AuditListItem {
+  session_id:      string
+  nombre_archivo:  string
+  estado:          string
+  total_registros: number
+  total_errores:   number
+  total_criticos:  number
+  valor_en_riesgo: number
+  created_at:      string
+  procesado_at:    string | null
+}
+
+/** Respuesta de GET /audits */
+export interface AuditListResponse {
+  items:  AuditListItem[]
+  total:  number
+  page:   number
+  pages:  number
+}
+
+// ─────────────────────────────────────────────
+// Autenticación
+// ─────────────────────────────────────────────
+
 async function getAccessToken(): Promise<string> {
   const supabase = createClient()
   const { data: { session } } = await supabase.auth.getSession()
@@ -36,44 +102,84 @@ async function getAccessToken(): Promise<string> {
   return session.access_token
 }
 
-/** Headers de autenticación para el backend. */
 async function authHeaders(): Promise<HeadersInit> {
   const token = await getAccessToken()
   return { Authorization: `Bearer ${token}` }
 }
 
-export async function auditRIPS(file: File): Promise<AuditResult> {
+// ─────────────────────────────────────────────
+// Funciones de API
+// ─────────────────────────────────────────────
+
+/**
+ * Sube un archivo RIPS para auditoría.
+ * Retorna SessionStatus con session_id para consultar el reporte.
+ */
+export async function auditRIPS(file: File): Promise<SessionStatus> {
   const formData = new FormData()
   formData.append('file', file)
 
   const headers = await authHeaders()
   const response = await fetch(`${API_URL}/audit/upload`, {
     method: 'POST',
-    headers, // Sin Content-Type: el browser lo setea automáticamente para multipart
+    headers,
     body: formData,
   })
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: 'Error desconocido' }))
-    throw new Error(error.detail || `Error ${response.status}`)
+    const err = await response.json().catch(() => ({ detail: 'Error desconocido' }))
+    throw new Error(err.detail || `Error del servidor (${response.status})`)
   }
 
-  return response.json()
+  return response.json() as Promise<SessionStatus>
 }
 
-export async function getAuditHistory(page = 1, pageSize = 20) {
+/**
+ * Obtiene el reporte completo de una sesión de auditoría.
+ * Llama a GET /audit/{sessionId}/report
+ */
+export async function getAuditById(sessionId: string): Promise<AuditReportResponse> {
+  const headers = await authHeaders()
+  const response = await fetch(`${API_URL}/audit/${sessionId}/report`, { headers })
+  if (!response.ok) {
+    if (response.status === 404) throw new Error('Auditoría no encontrada. Puede haberse eliminado.')
+    if (response.status === 409) throw new Error('La auditoría aún está procesando. Espera unos segundos.')
+    throw new Error(`Error al cargar el reporte (${response.status})`)
+  }
+  return response.json() as Promise<AuditReportResponse>
+}
+
+/**
+ * Obtiene el historial de auditorías del tenant con paginación.
+ */
+export async function getAuditHistory(
+  page = 1,
+  pageSize = 15,
+): Promise<AuditListResponse> {
   const headers = await authHeaders()
   const response = await fetch(
     `${API_URL}/audits?page=${page}&page_size=${pageSize}`,
-    { headers }
+    { headers },
   )
-  if (!response.ok) throw new Error('Error cargando historial')
-  return response.json()
+  if (!response.ok) {
+    throw new Error(`Error cargando historial (${response.status})`)
+  }
+  return response.json() as Promise<AuditListResponse>
 }
 
-export async function getAuditById(auditId: string): Promise<AuditResult> {
+/**
+ * Descarga el reporte JSON corregido de una sesión.
+ */
+export async function downloadReport(sessionId: string): Promise<void> {
   const headers = await authHeaders()
-  const response = await fetch(`${API_URL}/audit/${auditId}/report`, { headers })
-  if (!response.ok) throw new Error('Auditoría no encontrada')
-  return response.json()
+  const response = await fetch(`${API_URL}/audit/${sessionId}/download`, { headers })
+  if (!response.ok) throw new Error('No se pudo descargar el reporte')
+
+  const blob = await response.blob()
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  a.href     = url
+  a.download = `rips_guard_reporte_${sessionId.slice(0, 8)}.json`
+  a.click()
+  URL.revokeObjectURL(url)
 }

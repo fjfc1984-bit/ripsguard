@@ -194,13 +194,16 @@ def verify_supabase_jwt(authorization: str = Header(...)) -> AuthenticatedUser:
 
 
 def get_tenant_id(user: AuthenticatedUser = Depends(verify_supabase_jwt)) -> str:
-    """Extrae tenant_id del JWT o del header legacy X-Tenant-Id."""
+    """
+    Extrae tenant_id del JWT.
+    Fallback: usa user_id como tenant (un tenant por usuario) para usuarios
+    registrados antes de que se implementara el aprovisionamiento multi-tenant.
+    """
     if user.tenant_id:
         return user.tenant_id
-    raise HTTPException(
-        status_code=403,
-        detail="tenant_id no encontrado en el token. Contacta soporte."
-    )
+    # Fallback seguro — permite que todos los usuarios autenticados operen
+    logger.info(f"[get_tenant_id] user {user.user_id} sin tenant_id en JWT — usando user_id como tenant")
+    return f"u_{user.user_id}"
 
 
 # ─────────────────────────────────────────────
@@ -457,21 +460,50 @@ async def get_session(
     session_id: str,
     tenant_id: str = Depends(get_tenant_id),
 ):
+    # 1. Buscar en caché en memoria
     sess = _sessions.get(session_id)
-    if not sess or sess["tenant_id"] != tenant_id:
-        raise HTTPException(status_code=404, detail="Sesión no encontrada")
+    if sess and sess["tenant_id"] == tenant_id:
+        return SessionStatus(
+            session_id=session_id,
+            estado=sess["estado"],
+            nombre_archivo=sess["nombre_archivo"],
+            created_at=sess["created_at"],
+            procesado_at=sess.get("procesado_at"),
+            total_registros=sess.get("total_registros", 0),
+            total_errores=sess.get("total_errores", 0),
+            total_criticos=sess.get("total_criticos", 0),
+            valor_en_riesgo=sess.get("valor_en_riesgo", 0.0),
+        )
 
-    return SessionStatus(
-        session_id=session_id,
-        estado=sess["estado"],
-        nombre_archivo=sess["nombre_archivo"],
-        created_at=sess["created_at"],
-        procesado_at=sess.get("procesado_at"),
-        total_registros=sess.get("total_registros", 0),
-        total_errores=sess.get("total_errores", 0),
-        total_criticos=sess.get("total_criticos", 0),
-        valor_en_riesgo=sess.get("valor_en_riesgo", 0.0),
-    )
+    # 2. Fallback a Supabase (tras reinicio del servidor)
+    sb = get_supabase()
+    if sb:
+        try:
+            resp = (
+                sb.table("audit_sessions")
+                .select("*")
+                .eq("id", session_id)
+                .eq("tenant_id", tenant_id)
+                .single()
+                .execute()
+            )
+            if resp.data:
+                row = resp.data
+                return SessionStatus(
+                    session_id=session_id,
+                    estado=row["estado"],
+                    nombre_archivo=row["nombre_archivo"],
+                    created_at=row["created_at"],
+                    procesado_at=row.get("procesado_at"),
+                    total_registros=row.get("total_registros") or 0,
+                    total_errores=row.get("total_errores") or 0,
+                    total_criticos=row.get("total_criticos") or 0,
+                    valor_en_riesgo=float(row.get("valor_en_riesgo_cop") or 0),
+                )
+        except Exception as db_err:
+            logger.warning(f"[get_session] Supabase fallback falló: {db_err}")
+
+    raise HTTPException(status_code=404, detail="Sesión no encontrada")
 
 
 @app.get("/audit/{session_id}/report", response_model=AuditReportResponse)
@@ -479,46 +511,88 @@ async def get_report(
     session_id: str,
     tenant_id: str = Depends(get_tenant_id),
 ):
+    # 1. Buscar en caché en memoria (incluye findings completos)
     sess = _sessions.get(session_id)
-    if not sess or sess["tenant_id"] != tenant_id:
-        raise HTTPException(status_code=404, detail="Sesión no encontrada")
-    if sess["estado"] != "completado":
-        raise HTTPException(
-            status_code=409,
-            detail=f"Sesión en estado '{sess['estado']}'. Espere a que complete."
+    if sess and sess["tenant_id"] == tenant_id:
+        if sess["estado"] != "completado":
+            raise HTTPException(
+                status_code=409,
+                detail=f"Sesión en estado '{sess['estado']}'. Espere a que complete."
+            )
+        result: AuditResult = sess["result"]
+        findings_resp = [
+            FindingResponse(
+                tipo_error=f.tipo_error.value,
+                severidad=f.severidad.value,
+                campo=f.campo,
+                valor_incorrecto=f.valor_incorrecto,
+                descripcion=f.descripcion,
+                seccion=f.seccion.value,
+                numero_fila=f.numero_fila,
+                valor_en_riesgo=f.valor_en_riesgo,
+                regla_codigo=f.regla_codigo,
+                sugerencia_ia=f.sugerencia_ia,
+            )
+            for f in result.findings
+        ]
+        return AuditReportResponse(
+            session_id=session_id,
+            tenant_id=tenant_id,
+            total_registros=result.total_registros,
+            total_errores=result.total_errores,
+            total_criticos=result.total_criticos,
+            total_advertencias=result.total_advertencias,
+            valor_total=result.valor_total,
+            valor_en_riesgo=result.valor_en_riesgo,
+            porcentaje_riesgo=result.porcentaje_riesgo,
+            findings=findings_resp,
+            resumen_por_seccion=result.resumen_por_seccion,
+            resumen_por_tipo_error=result.resumen_por_tipo_error,
         )
 
-    result: AuditResult = sess["result"]
-    findings_resp = [
-        FindingResponse(
-            tipo_error=f.tipo_error.value,
-            severidad=f.severidad.value,
-            campo=f.campo,
-            valor_incorrecto=f.valor_incorrecto,
-            descripcion=f.descripcion,
-            seccion=f.seccion.value,
-            numero_fila=f.numero_fila,
-            valor_en_riesgo=f.valor_en_riesgo,
-            regla_codigo=f.regla_codigo,
-            sugerencia_ia=f.sugerencia_ia,
-        )
-        for f in result.findings
-    ]
+    # 2. Fallback a Supabase (tras reinicio del servidor)
+    # Los hallazgos individuales no persisten actualmente — se retorna el resumen
+    sb = get_supabase()
+    if sb:
+        try:
+            resp = (
+                sb.table("audit_sessions")
+                .select("*")
+                .eq("id", session_id)
+                .eq("tenant_id", tenant_id)
+                .single()
+                .execute()
+            )
+            if resp.data:
+                row = resp.data
+                if row["estado"] != "completado":
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Sesión en estado '{row['estado']}'. Espere a que complete."
+                    )
+                valor_total  = float(row.get("valor_total_cop") or 0)
+                valor_riesgo = float(row.get("valor_en_riesgo_cop") or 0)
+                porcentaje   = float(row.get("porcentaje_riesgo") or 0)
+                return AuditReportResponse(
+                    session_id=session_id,
+                    tenant_id=tenant_id,
+                    total_registros=row.get("total_registros") or 0,
+                    total_errores=row.get("total_errores") or 0,
+                    total_criticos=row.get("total_criticos") or 0,
+                    total_advertencias=row.get("total_advertencias") or 0,
+                    valor_total=valor_total,
+                    valor_en_riesgo=valor_riesgo,
+                    porcentaje_riesgo=porcentaje,
+                    findings=[],          # Hallazgos no disponibles tras reinicio
+                    resumen_por_seccion={},
+                    resumen_por_tipo_error={},
+                )
+        except HTTPException:
+            raise
+        except Exception as db_err:
+            logger.warning(f"[get_report] Supabase fallback falló: {db_err}")
 
-    return AuditReportResponse(
-        session_id=session_id,
-        tenant_id=tenant_id,
-        total_registros=result.total_registros,
-        total_errores=result.total_errores,
-        total_criticos=result.total_criticos,
-        total_advertencias=result.total_advertencias,
-        valor_total=result.valor_total,
-        valor_en_riesgo=result.valor_en_riesgo,
-        porcentaje_riesgo=result.porcentaje_riesgo,
-        findings=findings_resp,
-        resumen_por_seccion=result.resumen_por_seccion,
-        resumen_por_tipo_error=result.resumen_por_tipo_error,
-    )
+    raise HTTPException(status_code=404, detail="Sesión no encontrada")
 
 
 @app.get("/audit/{session_id}/download")
@@ -526,8 +600,35 @@ async def download_corrected(
     session_id: str,
     tenant_id: str = Depends(get_tenant_id),
 ):
+    # Buscar en memoria o verificar que existe en Supabase
     sess = _sessions.get(session_id)
     if not sess or sess["tenant_id"] != tenant_id:
+        # Verificar en Supabase antes de rechazar
+        sb = get_supabase()
+        if sb:
+            try:
+                resp = (
+                    sb.table("audit_sessions")
+                    .select("id,tenant_id,estado")
+                    .eq("id", session_id)
+                    .eq("tenant_id", tenant_id)
+                    .single()
+                    .execute()
+                )
+                if not resp.data:
+                    raise HTTPException(status_code=404, detail="Sesión no encontrada")
+                if resp.data["estado"] != "completado":
+                    raise HTTPException(status_code=409, detail="Sesión aún no completada")
+                # Sesión existe en Supabase pero los hallazgos no están en memoria
+                raise HTTPException(
+                    status_code=410,
+                    detail="Los hallazgos de esta auditoría ya no están disponibles. "
+                           "Suba el archivo nuevamente para generar un nuevo reporte descargable."
+                )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
         raise HTTPException(status_code=404, detail="Sesión no encontrada")
     if sess["estado"] != "completado":
         raise HTTPException(status_code=409, detail="Sesión aún no completada")

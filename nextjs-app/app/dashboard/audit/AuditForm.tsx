@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { auditRIPS } from '@/lib/api'
+import type { SessionStatus } from '@/lib/api'
 import type { Plan } from '@/lib/subscription'
 import { UploadIcon, FileTextIcon, XIcon, SearchIcon, ShieldIcon, ZapIcon } from '@/components/ui/icons'
 
@@ -27,8 +28,8 @@ export default function AuditForm({ plan }: { plan: Plan | null }) {
     setLoading(true)
     setError(null)
     try {
-      const result = await auditRIPS(file)
-      router.push(`/dashboard/audit/results?id=${result.audit_id}`)
+      const result: SessionStatus = await auditRIPS(file)
+      router.push(`/dashboard/audit/results?id=${result.session_id}`)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Error al procesar el archivo.')
       setLoading(false)
@@ -58,7 +59,7 @@ export default function AuditForm({ plan }: { plan: Plan | null }) {
       {/* Header */}
       <div className="mb-7">
         <h1 className="text-xl font-bold text-slate-900 tracking-tight">Nueva auditoría RIPS</h1>
-        <p className="text-sm text-slate-500 mt-0.5">Resolución 2275 de 2023 · Archivos .json o .rips</p>
+        <p className="text-sm text-slate-500 mt-0.5">Resolución 2275 de 2023 · Archivos .json o .zip</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-4xl">
@@ -121,7 +122,7 @@ export default function AuditForm({ plan }: { plan: Plan | null }) {
                       <p className="text-sm font-semibold text-slate-700">
                         {dragging ? 'Suelta el archivo aquí' : 'Arrastra o haz clic para seleccionar'}
                       </p>
-                      <p className="text-xs text-slate-400 mt-1">Archivos .json o .rips · máx. {maxMB} MB</p>
+                      <p className="text-xs text-slate-400 mt-1">Archivos .json o .zip · máx. {maxMB} MB</p>
                     </div>
                   </div>
                 )}
@@ -130,7 +131,7 @@ export default function AuditForm({ plan }: { plan: Plan | null }) {
               <input
                 id="fileInput"
                 type="file"
-                accept=".json,.rips"
+                accept=".json,.zip"
                 className="hidden"
                 disabled={loading}
                 onChange={handleFileChange}
