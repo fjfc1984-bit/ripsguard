@@ -85,7 +85,7 @@ export default function HomePage() {
           Valida archivos RIPS JSON al instante contra la norma vigente.
           Detecta errores antes de enviar a la aseguradora — ahorra glosas y tiempo.
         </p>
-        <div className="flex items-center justify-center gap-3">
+        <div className="flex items-center justify-center gap-3 flex-wrap">
           <Link
             href="/register"
             className="bg-blue-600 text-white px-7 py-3 rounded-lg font-bold hover:bg-blue-700 transition text-sm shadow-lg shadow-blue-200"
@@ -93,13 +93,13 @@ export default function HomePage() {
             Empezar gratis — 14 días
           </Link>
           <Link
-            href="/login"
+            href="/demo/results"
             className="bg-white text-slate-700 px-7 py-3 rounded-lg font-semibold border border-slate-200 hover:bg-slate-50 transition text-sm"
           >
-            Iniciar sesión
+            Ver demo en vivo
           </Link>
         </div>
-        <p className="text-xs text-slate-400 mt-3">Sin tarjeta de crédito · Cancela cuando quieras</p>
+        <p className="text-xs text-slate-400 mt-3">Sin tarjeta de crédito · Demo disponible sin registro</p>
       </section>
 
       {/* Stats bar */}

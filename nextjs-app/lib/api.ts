@@ -167,6 +167,43 @@ export async function getAuditHistory(
   return response.json() as Promise<AuditListResponse>
 }
 
+// ─────────────────────────────────────────────
+// Tipos adicionales
+// ─────────────────────────────────────────────
+
+export interface TenantStats {
+  auditorias_mes:     number
+  auditorias_hoy:     number
+  total_criticos_mes: number
+  valor_riesgo_mes:   number
+  top_error:          string | null
+}
+
+// ─────────────────────────────────────────────
+// Funciones públicas (sin auth)
+// ─────────────────────────────────────────────
+
+/**
+ * Reporte demo público — no requiere sesión de usuario.
+ * Llama a GET /demo/report (endpoint sin auth).
+ */
+export async function getDemoReport(): Promise<AuditReportResponse> {
+  const response = await fetch(`${API_URL}/demo/report`)
+  if (!response.ok) throw new Error('Error cargando reporte demo')
+  return response.json() as Promise<AuditReportResponse>
+}
+
+// ─────────────────────────────────────────────
+// Estadísticas del tenant
+// ─────────────────────────────────────────────
+
+export async function getTenantStats(): Promise<TenantStats> {
+  const headers = await authHeaders()
+  const response = await fetch(`${API_URL}/stats`, { headers })
+  if (!response.ok) throw new Error(`Error cargando estadísticas (${response.status})`)
+  return response.json() as Promise<TenantStats>
+}
+
 /**
  * Descarga el reporte JSON corregido de una sesión.
  */

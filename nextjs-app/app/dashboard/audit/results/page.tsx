@@ -14,6 +14,18 @@ import {
   ChevronDownIcon, ChevronUpIcon, SearchIcon, DownloadIcon,
 } from '@/components/ui/icons'
 
+// Estilos de impresión inyectados en el DOM (PDF via Ctrl+P / window.print)
+const PRINT_STYLES = `
+@media print {
+  header, nav, [data-no-print], .no-print { display: none !important; }
+  body { background: white !important; }
+  .print-break { page-break-before: always; }
+  .bg-slate-50\\/50 { background: #f8fafc !important; }
+  button { display: none !important; }
+  a[href]:after { content: none !important; }
+}
+`
+
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
@@ -153,6 +165,14 @@ function ResultsContent() {
   const [filter, setFilter]    = useState<'all' | 'critico' | 'advertencia'>('all')
   const [downloading, setDown] = useState(false)
 
+  // Inyectar estilos de impresión una sola vez
+  useEffect(() => {
+    const style = document.createElement('style')
+    style.textContent = PRINT_STYLES
+    document.head.appendChild(style)
+    return () => document.head.removeChild(style)
+  }, [])
+
   useEffect(() => {
     if (!sessionId) { setLoading(false); return }
     getAuditById(sessionId)
@@ -222,8 +242,21 @@ function ResultsContent() {
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
           <button
+            onClick={() => window.print()}
+            data-no-print
+            className="flex items-center gap-1.5 border border-slate-200 text-slate-700 text-sm font-medium px-4 py-2 rounded-lg hover:bg-slate-50 transition"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>
+              <rect x="6" y="14" width="12" height="8"/>
+            </svg>
+            Imprimir / PDF
+          </button>
+          <button
             onClick={handleDownload}
             disabled={downloading}
+            data-no-print
             className="flex items-center gap-1.5 border border-slate-200 text-slate-700 text-sm font-medium px-4 py-2 rounded-lg hover:bg-slate-50 transition disabled:opacity-50"
           >
             <DownloadIcon size={14} strokeWidth={2} />
