@@ -170,7 +170,7 @@ function ResultsContent() {
     const style = document.createElement('style')
     style.textContent = PRINT_STYLES
     document.head.appendChild(style)
-    return () => document.head.removeChild(style)
+    return () => { document.head.removeChild(style) }
   }, [])
 
   useEffect(() => {
