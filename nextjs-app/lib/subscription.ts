@@ -11,7 +11,7 @@ export type SubscriptionEstado = 'trial' | 'activa' | 'pausada' | 'cancelada' | 
 export interface SubscriptionStatus {
   plan: Plan | null
   estado: SubscriptionEstado | null
-  isActive: boolean          // true si puede usar el producto
+  isActive: boolean
   trialEndsAt: string | null
   periodEndsAt: string | null
   tenantId: string | null
@@ -26,32 +26,42 @@ const INACTIVE: SubscriptionStatus = {
   tenantId: null,
 }
 
+function trialStatus(tenantId: string): SubscriptionStatus {
+  const trialEnd = new Date()
+  trialEnd.setDate(trialEnd.getDate() + 14)
+  return {
+    plan: 'starter',
+    estado: 'trial',
+    isActive: true,
+    trialEndsAt: trialEnd.toISOString(),
+    periodEndsAt: null,
+    tenantId,
+  }
+}
+
 export async function getSubscriptionStatus(): Promise<SubscriptionStatus> {
   const supabase = await createClient()
 
-  // 1. Obtener usuario autenticado
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) return INACTIVE
 
-  // 2. Obtener tenant del usuario
   const { data: userRecord, error: userErr } = await supabase
     .from('users')
     .select('tenant_id')
     .eq('id', user.id)
     .single()
 
-  if (userErr || !userRecord) return INACTIVE
+  // Usuario nuevo sin primer upload — trial activo, backend crea la fila al subir
+  if (userErr || !userRecord) return trialStatus(user.id)
 
-  // 3. Obtener suscripción del tenant
   const { data: sub, error: subErr } = await supabase
     .from('subscriptions')
     .select('plan, estado, trial_ends_at, current_period_end')
     .eq('tenant_id', userRecord.tenant_id)
     .single()
 
-  if (subErr || !sub) return INACTIVE
+  if (subErr || !sub) return trialStatus(userRecord.tenant_id)
 
-  // 4. Determinar si está activa
   const now = new Date()
   const isActive =
     sub.estado === 'activa' ||
