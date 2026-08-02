@@ -22,7 +22,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline' https://checkout.bold.co",
       "img-src 'self' data: blob: https://*.supabase.co https://checkout.bold.co https://*.bold.co",
       "font-src 'self' https://checkout.bold.co",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://*.bold.co",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://*.bold.co https://ripsguard-production.up.railway.app",
       "frame-src https://js.stripe.com https://hooks.stripe.com https://checkout.stripe.com https://checkout.bold.co",
       "object-src 'none'",
       "base-uri 'self'",
