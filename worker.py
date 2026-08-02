@@ -293,12 +293,12 @@ async def upload_rips(
     Requiere: Authorization: Bearer <supabase_access_token>
     """
     # Validar tipo de archivo
-    allowed = {".json", ".zip"}
+    allowed = {".json", ".zip", ".rips"}
     suffix  = ("." + file.filename.rsplit(".", 1)[-1].lower()) if "." in file.filename else ""
     if suffix not in allowed:
         raise HTTPException(
             status_code=400,
-            detail=f"Formato '{suffix}' no soportado. Use .json o .zip"
+            detail=f"Formato '{suffix}' no soportado. Use .json, .zip o .rips"
         )
 
     content = await file.read()
@@ -330,6 +330,7 @@ async def upload_rips(
                 tmp_path = tmp.name
             doc = parser.parse_file(tmp_path)
         else:
+            # .json y .rips se parsean como JSON (RIPS 2.0 — Res. 2275/2023)
             doc = parser.parse_string(content.decode("utf-8"))
 
         # 2. VALIDATE
