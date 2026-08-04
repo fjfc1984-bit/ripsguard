@@ -293,6 +293,7 @@ async def upload_rips(
     Requiere: Authorization: Bearer <supabase_access_token>
     """
     # Validar tipo de archivo
+    # .rips = formato RIPS 2.0 (JSON) de algunos proveedores; se parsea igual que .json
     allowed = {".json", ".zip", ".rips"}
     suffix  = ("." + file.filename.rsplit(".", 1)[-1].lower()) if "." in file.filename else ""
     if suffix not in allowed:
